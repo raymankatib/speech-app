@@ -25,10 +25,12 @@ fastify.register(fastifyWs);
 
 // Constants
 const SYSTEM_MESSAGE =
-	"You are an AI receptionist for Barts Automotive. Your job is to politely engage with the client and obtain their name, availability, and service/work required. Ask one question at a time. Do not ask for other contact information, and do not check availability, assume we are free. Ensure the conversation remains friendly and professional, and guide the user to provide these details naturally. If necessary, ask follow-up questions to gather the required information.";
+	"You are an AI assistant for a career matching service. Your job is to politely engage with the client and gather their full name, email address, job title, and number of years of experience. Ask one question at a time to ensure a smooth and engaging conversation. Do not ask for other personal information or delve into unrelated topics. Ensure the conversation remains friendly and professional, and guide the user naturally to provide these details. If necessary, ask follow-up questions to clarify or complete the information provided.";
+
 const VOICE = "alloy";
 const PORT = process.env.PORT || 5050;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
+const JSON_PLACEHOLDER_API = "https://jsonplaceholder.typicode.com";
 
 // Session management
 const sessions = new Map();
@@ -46,6 +48,25 @@ const LOG_EVENT_TYPES = [
 	"conversation.item.input_audio_transcription.completed"
 ];
 
+// Function to fetch user data from JSONPlaceholder
+async function getExampleUserData() {
+	try {
+		// Fetch a random user (between 1-10)
+		const userId = Math.floor(Math.random() * 10) + 1;
+		const response = await fetch(`${JSON_PLACEHOLDER_API}/users/${userId}`);
+		
+		if (!response.ok) {
+			throw new Error('API request failed');
+		}
+		
+		const user = await response.json();
+		return `Here's an interesting fact: We have a user named ${user.name} who works at ${user.company.name}. `;
+	} catch (error) {
+		console.error('Error fetching user data:', error);
+		return ''; // Return empty string if fetch fails
+	}
+}
+
 // Root Route
 fastify.get("/", async (request, reply) => {
 	reply.send({ message: "Twilio Media Stream Server is running!" });
@@ -54,14 +75,17 @@ fastify.get("/", async (request, reply) => {
 // Route for Twilio to handle incoming and outgoing calls
 fastify.all("/incoming-call", async (request, reply) => {
 	console.log("Incoming call");
-
+	
+	// Fetch example user data before responding
+	const userInfo = await getExampleUserData();
+	
 	const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-													<Response>
-															<Say>Hi, you have called Bart's Automative Centre. How can we help?</Say>
-															<Connect>
-																	<Stream url="wss://${request.headers.host}/media-stream" />
-															</Connect>
-													</Response>`;
+		<Response>
+			<Say>Hi, you have called Northpoint's AI Job Matching Centre. ${userInfo}How can we help?</Say>
+			<Connect>
+				<Stream url="wss://${request.headers.host}/media-stream" />
+			</Connect>
+		</Response>`;
 
 	reply.type("text/xml").send(twimlResponse);
 });
@@ -130,9 +154,8 @@ fastify.register(async (fastify) => {
 
 				// Agent message handling
 				if (response.type === "response.done") {
-					const agentMessage =
-						response.response.output[0]?.content?.find((content) => content.transcript)?.transcript ||
-						"Agent message not found";
+					console.log("Full response.done payload:", JSON.stringify(response, null, 2));
+					const agentMessage = response.response?.text || "Agent message not found";
 					session.transcript += `Agent: ${agentMessage}\n`;
 					console.log(`Agent (${sessionId}): ${agentMessage}`);
 				}
@@ -232,22 +255,24 @@ async function makeChatGPTCompletion(transcript) {
 				messages: [
 					{
 						role: "system",
-						content: "Extract customer details: name, availability, and any special notes from the transcript."
+						content:
+							"Extract the following details from the transcript: full name, email address, job title, and years of experience."
 					},
 					{ role: "user", content: transcript }
 				],
 				response_format: {
 					type: "json_schema",
 					json_schema: {
-						name: "customer_details_extraction",
+						name: "career_details_extraction",
 						schema: {
 							type: "object",
 							properties: {
-								customerName: { type: "string" },
-								customerAvailability: { type: "string" },
-								specialNotes: { type: "string" }
+								fullName: { type: "string" },
+								emailAddress: { type: "string" },
+								jobTitle: { type: "string" },
+								yearsOfExperience: { type: "string" }
 							},
-							required: ["customerName", "customerAvailability", "specialNotes"]
+							required: ["fullName", "emailAddress", "jobTitle", "yearsOfExperience"]
 						}
 					}
 				}
